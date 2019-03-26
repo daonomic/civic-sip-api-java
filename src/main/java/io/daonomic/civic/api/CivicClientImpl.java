@@ -29,30 +29,28 @@ import static java.util.Arrays.asList;
 @SuppressWarnings("WeakerAccess")
 public class CivicClientImpl implements CivicClient {
     private final WebClient webClient;
-    private final CivicConfig config;
     private final ObjectMapper objectMapper;
 
-    public CivicClientImpl(CivicConfig config) {
+    public CivicClientImpl(String baseUrl) {
         this.webClient = WebClient.builder()
-            .baseUrl("https://api.civic.com/sip/prod")
+            .baseUrl(baseUrl)
             .build();
-        this.config = config;
         this.objectMapper = new ObjectMapper();
     }
 
-    public Mono<ExchangeCodeResult> exchangeCode(String token) {
+    public Mono<ExchangeCodeResult> exchangeCode(CivicConfig config, String token) {
         return MonoUtils.tryMono(() -> objectMapper.writeValueAsString(new AuthTokenBody(token)))
-            .flatMap(requestBody -> MonoUtils.tryMono(() -> makeAuthorizationHeader(requestBody))
+            .flatMap(requestBody -> MonoUtils.tryMono(() -> makeAuthorizationHeader(config, requestBody))
                 .flatMap(header -> webClient.post()
                     .uri("/scopeRequest/authCode")
                     .body(BodyInserters.fromObject(requestBody))
                     .header("Authorization", header)
                     .retrieve()
                     .bodyToMono(AuthCodeResult.class)))
-            .flatMap(this::toExchangeCodeResult);
+            .flatMap(result -> toExchangeCodeResult(config, result));
     }
 
-    public Mono<ExchangeCodeResult> toExchangeCodeResult(AuthCodeResult tempResult) {
+    public Mono<ExchangeCodeResult> toExchangeCodeResult(CivicConfig config, AuthCodeResult tempResult) {
         String[] parts = tempResult.getData().split("\\.");
         if (parts.length >= 2) {
             byte[] data = Base64.decodeBase64(parts[1]);
@@ -66,11 +64,11 @@ public class CivicClientImpl implements CivicClient {
         }
     }
 
-    private String makeAuthorizationHeader(String requestBody) throws NoSuchAlgorithmException, InvalidKeySpecException, InvalidKeyException, InvalidAlgorithmParameterException, DecoderException {
-        return "Civic " + getHeaderFirstPart() + "." + getHeaderSecondPart(requestBody);
+    private String makeAuthorizationHeader(CivicConfig config, String requestBody) throws NoSuchAlgorithmException, InvalidKeySpecException, InvalidKeyException, InvalidAlgorithmParameterException, DecoderException {
+        return "Civic " + getHeaderFirstPart(config) + "." + getHeaderSecondPart(config, requestBody);
     }
 
-    private String getHeaderFirstPart() throws InvalidKeySpecException, InvalidAlgorithmParameterException, NoSuchAlgorithmException, DecoderException {
+    private String getHeaderFirstPart(CivicConfig config) throws InvalidKeySpecException, InvalidAlgorithmParameterException, NoSuchAlgorithmException, DecoderException {
         Date now = new Date();
         Map<String, Object> header = new HashMap<>();
         header.put("typ", "JWT");
@@ -89,7 +87,7 @@ public class CivicClientImpl implements CivicClient {
             .compact();
     }
 
-    private String getHeaderSecondPart(String requestBody) throws NoSuchAlgorithmException, InvalidKeyException {
+    private String getHeaderSecondPart(CivicConfig config, String requestBody) throws NoSuchAlgorithmException, InvalidKeyException {
         Mac mac = Mac.getInstance("HmacSHA256");
         SecretKeySpec secretKey = new SecretKeySpec(config.getSecret().getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         mac.init(secretKey);
